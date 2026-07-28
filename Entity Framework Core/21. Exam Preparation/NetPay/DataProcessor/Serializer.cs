@@ -1,0 +1,75 @@
+﻿using Microsoft.EntityFrameworkCore;
+using NetPay.Data;
+using NetPay.Data.Models.Enums;
+using NetPay.DataProcessor.ExportDtos;
+using NetPay.Utilities;
+using Newtonsoft.Json;
+using System.Text;
+
+namespace NetPay.DataProcessor
+{
+    public class Serializer
+    {
+        public static string ExportHouseholdsWhichHaveExpensesToPay(NetPayContext dbContext)
+        {
+            ExportHouseholdUnpaidExpensesDto[] householdUnpaidExpensesDtos = dbContext
+                .Households
+                .AsNoTracking()
+                .Include(h => h.Expenses)
+                .ThenInclude(e => e.Service)
+                .Where(h => h.Expenses.Any(e => e.PaymentStatus != PaymentStatus.Paid))
+                .OrderBy(h => h.ContactPerson)
+                .AsEnumerable() // -> using eager load, should include the related entities
+                .Select(h => new ExportHouseholdUnpaidExpensesDto()
+                {
+                    ContactPerson = h.ContactPerson,
+                    Email = h.Email,
+                    PhoneNumber = h.PhoneNumber,
+                    UnpaidExpenses = h.Expenses
+                        .Where(e => e.PaymentStatus != PaymentStatus.Paid)
+                        // .AsEnumerable()
+                        .Select(e => new ExportUnpaidExpensesDto
+                        {
+                            ExpenseName = e.ExpenseName,
+                            Amount = e.Amount.ToString("F2"),
+                            DueDate = e.DueDate.ToString("yyyy-MM-dd"),
+                            ServiceName = e.Service.ServiceName
+                        })
+                        .OrderBy(e => e.DueDate)
+                        .ThenBy(e => e.Amount)
+                        .ToArray()
+                })
+                .ToArray();
+
+            string xmlResult = XmlSerializerWrapper
+                .Serialize(householdUnpaidExpensesDtos, "Households");
+
+            return xmlResult;
+        }
+
+        public static string ExportAllServicesWithSuppliers(NetPayContext dbContext)
+        {
+            var servicesWithSuppliers = dbContext
+                .Services
+                .AsNoTracking()
+                .Select(s => new
+                {
+                    ServiceName = s.ServiceName,
+                    Suppliers = s.SuppliersServices
+                    .Select(ss => new
+                    {
+                        ss.Supplier.SupplierName
+                    })
+                    .OrderBy(ss => ss.SupplierName)
+                    .ToArray()
+                })
+                .OrderBy(s => s.ServiceName)
+                .ToArray();
+
+            string jsonResult = JsonConvert
+                .SerializeObject(servicesWithSuppliers, Formatting.Indented);
+
+            return jsonResult;
+        }
+    }
+}
